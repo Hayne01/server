@@ -1411,7 +1411,7 @@ static void buf_flush_LRU_list_batch(ulint max, flush_counters_t *n,
             auto space_name= space->name();
             if (!space_name.data() ||
                 strncmp(space_name.data(), "test/t.ibd", space_name.size()))
-              goto free_page;;
+              goto free_page;
           });
       // FIXME: currently every second page is flushed, consider more
       // suitable algorithm there
@@ -1529,17 +1529,6 @@ flush_to_ebp:
           ++n->evicted;
           continue;
         }
-        /*
-        ut_d(if (DBUG_IF("ib_ext_bp_count_io_only_for_t")) {
-          auto space_name= space->name();
-          if (space_name.data() &&
-              !strncmp(space_name.data(), "test/t.ibd", space_name.size()) &&
-              fil_page_get_type(bpage->frame) == FIL_PAGE_INDEX) {
-            ++buf_pool.stat.n_pages_written_to_ebp;
-            }
-        } else)
-        ++ buf_pool.stat.n_pages_written_to_ebp;
-        */
       }
       else if (neighbors && space->is_rotational() &&
                UNIV_LIKELY(!to_withdraw) &&

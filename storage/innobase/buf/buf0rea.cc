@@ -429,9 +429,6 @@ buf_read_page_low(
                                      ? *UT_LIST_GET_FIRST(space->chain)
                                      : *fio.node,
                                  recv_sys.recovery_on);
-      if (*err)
-        bpage= nullptr;
-      space->release();
       if (init_page_result.in_ext_buffer_pool())
       {
         ut_d(if (DBUG_IF("ib_ext_bp_count_io_only_for_t")) {
@@ -442,6 +439,9 @@ buf_read_page_low(
             ++buf_pool.stat.n_pages_read_from_ebp;
         } else)++ buf_pool.stat.n_pages_read_from_ebp;
       }
+      if (*err)
+        bpage= nullptr;
+      space->release();
       /* FIXME: Remove this, and accumulate stats->pages_read_count to
       global statistics somewhere! */
       buf_LRU_stat_inc_io();

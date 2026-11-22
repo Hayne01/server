@@ -1199,10 +1199,10 @@ struct buf_pool_stat_t{
 	};
 	ulint	n_pages_read;	/*!< number read operations */
 	/** Number of pages, read from external buffer pool file */
-	ulint	n_pages_read_from_ebp;
+	Atomic_counter<ulint> n_pages_read_from_ebp{0};
 	ulint	n_pages_written;/*!< number write operations */
 	/** Number of pages, written to external buffer pool file */
-	ulint	n_pages_written_to_ebp;
+	Atomic_counter<ulint> n_pages_written_to_ebp{0};
 	ulint	n_pages_created;/*!< number of pages created
 				in the pool with no read */
 	ulint	n_ra_pages_read_rnd;/*!< number of pages read in
