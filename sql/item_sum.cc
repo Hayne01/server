@@ -1464,6 +1464,7 @@ Item_sum_sp::cleanup()
 {
   Item_sp::cleanup();
   Item_sum::cleanup();
+  max_length= 0;
 }
 
 /**

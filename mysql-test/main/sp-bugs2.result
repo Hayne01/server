@@ -161,4 +161,17 @@ i
 DROP PROCEDURE p1;
 DROP FUNCTION sp_returns_int;
 DROP FUNCTION sp_returns_row;
+CREATE TABLE t1 (a VARCHAR(100));
+CREATE FUNCTION f1() RETURNS TYPE OF t1.a DETERMINISTIC RETURN REPEAT('x',50);
+PREPARE s FROM 'SELECT f1() AS c';
+EXECUTE s;
+Catalog	Database	Table	Table_alias	Column	Column_alias	Type	Length	Max length	Is_null	Flags	Decimals	Charsetnr
+def				c	c	253	300	50	Y	0	0	192
+c
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ALTER TABLE t1 MODIFY a VARCHAR(5);
+EXECUTE s;
+ERROR 22001: Data too long for column 'c' at row 0
+DROP FUNCTION f1;
+DROP TABLE t1;
 # End of 11.8 tests

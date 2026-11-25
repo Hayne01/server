@@ -6685,6 +6685,7 @@ Item_func_sp::cleanup()
 {
   Item_sp::cleanup();
   Item_func::cleanup();
+  max_length= 0;
 }
 
 LEX_CSTRING
