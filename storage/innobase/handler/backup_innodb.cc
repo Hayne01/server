@@ -1759,81 +1759,88 @@ private:
                    uint32_t limit) noexcept
   {
     ut_ad(ctx.state == PROCESSING);
+    ut_ad(&space == fil_system.sys_space || UT_LIST_GET_LEN(space.chain) == 1);
     int res;
     uint32_t start{0};
     fil_node_t *node= UT_LIST_GET_FIRST(space.chain);
-    if (UNIV_LIKELY(name != nullptr))
-    {
-      if (sink.stream == sink.NO_STREAM && FSP_FLAGS_HAS_DATA_DIR(space.flags))
-      {
-        /*
-          In BACKUP SERVER TO, the DATA DIRECTORY source
-          would be identical to the destination.
-          Streaming backup (BACKUP SERVER WITH) would work.
-        */
-        my_error(ER_CANT_CREATE_FILE, MYF(0), name, EEXIST);
-        res= -1;
-      }
-      else
-      {
-        int (*method)(const backup_target &, const backup_sink &,
-                      fil_node_t *, const char *, uint32_t, uint32_t)
-        { sink.stream == sink.NO_STREAM ? backup : stream };
-#ifdef HAVE_POSIX_FALLOCATE
-        if (limit & 3 && !UT_LIST_GET_NEXT(chain, node))
-        {
-          const uint32_t page_size{space.physical_size()};
-          if ((limit * page_size) & 4095)
-            /*
-              os_file_set_size() extends ROW_FORMAT=COMPRESSED files to
-              multiples of 4096 bytes. There may be up to 3 pages
-              (of 1024 bytes) that have not been written out yet.
-              We must cap the limit to the actual file size.
-            */
-            limit=
-              std::min(limit,
-                       uint32_t(os_file_get_size(node->handle) / page_size));
-        }
-#endif
-        for (;;)
-        {
-          cache_friendly(node->handle);
-#ifdef POSIX_FADV_SEQUENTIAL
-          std::ignore=
-            posix_fadvise(node->handle, 0, 0, POSIX_FADV_SEQUENTIAL);
-#endif
-          res= (*method)(target, sink, node, name, start, limit);
-#ifdef POSIX_FADV_NORMAL
-          std::ignore=
-            posix_fadvise(node->handle, 0, 0, POSIX_FADV_NORMAL);
-#endif
-          if (res)
-            break;
-          fil_node_t *next= UT_LIST_GET_NEXT(chain, node);
-          if (!next)
-            break;
-          ut_ad(&space == fil_system.sys_space);
-          const uint32_t size{node->size};
-          start+= size;
-          if (limit >= size)
-            limit-= size;
-          else
-            limit= 0;
-          node= next;
-          name= node->name;
-        }
-      }
-
-      mysql_mutex_lock(&fil_system.mutex);
-      node->clear_backup_name();
-      mysql_mutex_unlock(&fil_system.mutex);
-    }
-    else
+    if (UNIV_UNLIKELY(!name))
     {
       /* This should be ALTER TABLE ... IMPORT TABLESPACE */
       ut_ad(space.create_lsn >= ctx.checkpoint /* completed */ ||
             space.is_being_imported() /* started after init() */);
       res= 0;
+    }
+    else if (UNIV_UNLIKELY(FSP_FLAGS_HAS_DATA_DIR(space.flags)) &&
+             sink.stream == sink.NO_STREAM)
+    {
+      /*
+        In BACKUP SERVER TO, the DATA DIRECTORY source
+        would be identical to the destination.
+        Streaming backup (BACKUP SERVER WITH) would work.
+      */
+      my_error(ER_CANT_CREATE_FILE, MYF(0), name, EEXIST);
+      res= -1;
+    }
+    else
+    {
+      int (*method)(const backup_target &, const backup_sink &,
+                    fil_node_t *, const char *, uint32_t, uint32_t)
+      { sink.stream == sink.NO_STREAM ? backup : stream };
+
+      if (sink.stream == sink.NO_STREAM && srv_is_undo_tablespace(space.id))
+        /*
+          In BACKUP SERVER TO, disregard innodb_undo_directory and
+          write directly to the backup directory. The user must move
+          the undo* files to the desired location if necessary.
+        */
+        name+= get_dir_prefix_len(name);
+#ifdef HAVE_POSIX_FALLOCATE
+      if (limit & 3 && !UT_LIST_GET_NEXT(chain, node))
+      {
+        const uint32_t page_size{space.physical_size()};
+        if ((limit * page_size) & 4095)
+          /*
+            os_file_set_size() extends ROW_FORMAT=COMPRESSED files to
+            multiples of 4096 bytes. There may be up to 3 pages
+            (of 1024 bytes) that have not been written out yet.
+            We must cap the limit to the actual file size.
+          */
+          limit=
+            std::min(limit,
+                     uint32_t(os_file_get_size(node->handle) / page_size));
+      }
+#endif
+      for (;;)
+      {
+        cache_friendly(node->handle);
+#ifdef POSIX_FADV_SEQUENTIAL
+        std::ignore=
+          posix_fadvise(node->handle, 0, 0, POSIX_FADV_SEQUENTIAL);
+#endif
+        res= (*method)(target, sink, node, name, start, limit);
+#ifdef POSIX_FADV_NORMAL
+        std::ignore=
+          posix_fadvise(node->handle, 0, 0, POSIX_FADV_NORMAL);
+#endif
+        if (res)
+          break;
+        fil_node_t *next= UT_LIST_GET_NEXT(chain, node);
+        if (!next)
+          break;
+        ut_ad(&space == fil_system.sys_space);
+        const uint32_t size{node->size};
+        start+= size;
+        if (limit >= size)
+          limit-= size;
+        else
+          limit= 0;
+        node= next;
+        name= node->name;
+      }
+
+      mysql_mutex_lock(&fil_system.mutex);
+      node->clear_backup_name();
+      mysql_mutex_unlock(&fil_system.mutex);
     }
     space.release();
     ut_ad(res <= 0);
@@ -2460,22 +2467,12 @@ int InnoDB_backup::backup(const backup_target &target, const backup_sink &,
                           fil_node_t *node, const char *name,
                           uint32_t start, uint32_t limit) noexcept try
 {
-  size_t dir_prefix= 0;
-  if (node->space->id && srv_is_undo_tablespace(node->space->id))
-  {
-    /*
-      When --innodb-undo-directory, put the undo files in the basedir of the
-      backup. The user must move then to the desired location if necessary.
-    */
-    dir_prefix= get_dir_prefix_len(name);
-  }
-
   for (bool tried_mkdir{false};;)
   {
 #ifdef _WIN32
     std::string path{target.path};
     path.push_back('/');
-    path.append(name + dir_prefix);
+    path.append(name);
     HANDLE f=
       CreateFile(path.c_str(), GENERIC_WRITE, 0, my_win_file_secattr(),
                  CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_NO_BUFFERING,
@@ -2507,7 +2504,7 @@ int InnoDB_backup::backup(const backup_target &target, const backup_sink &,
     this assumption be invalid, some data files in the backup may be
     corrupted. This corruption can be fixed by either removing this
     special handling, or by implementing file-level locking. */
-    f= fclonefileat(node->handle, target.fd, name + dir_prefix, 0);
+    f= fclonefileat(node->handle, target.fd, name, 0);
     if (!f)
       break;
     switch (errno) {
@@ -2531,11 +2528,11 @@ int InnoDB_backup::backup(const backup_target &target, const backup_sink &,
       switch (FSP_FLAGS_GET_ZIP_SSIZE(node->space->flags)) {
       case 1: /* 1024 bytes */
       case 2: /* 2048 bytes */
-        f= backup_file_create_buffered(target.fd, name + dir_prefix);
+        f= backup_file_create_buffered(target.fd, name);
         continue;
       }
 # endif
-      f= backup_file_create(target.fd, name + dir_prefix);
+      f= backup_file_create(target.fd, name);
     }
     while (false);
 
@@ -2649,8 +2646,7 @@ int InnoDB_backup::backup(const backup_target &target, const backup_sink &,
       if (err != 2)
         goto fail;
       /* The tablespace is being dropped. */
-      IF_WIN(DeleteFile(path.c_str()),
-             unlinkat(target.fd, name + dir_prefix, 0));
+      IF_WIN(DeleteFile(path.c_str()), unlinkat(target.fd, name, 0));
     }
 
     break;
