@@ -1859,10 +1859,12 @@ private:
     char filename[OS_FILE_MAX_PATH];
     binlog_name_make(filename, file_no);
     /*
-      When --binlog-directory, put the binlog files in the basedir of the
-      backup. The user must move then to the desired location if necessary.
+      In BACKUP SERVER TO, disregard binlog_directory and
+      write directly to the backup directory. The user must move
+      the *.ibb files to the desired location if necessary.
     */
-    size_t dir_prefix= get_dir_prefix_len(filename);
+    const size_t dir_prefix= sink.stream == sink.NO_STREAM
+      ? get_dir_prefix_len(filename) : 0;
     return backup::copy_or_stream(target, sink, filename, dir_prefix);
   }
 

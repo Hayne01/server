@@ -1,1 +1,2 @@
 --innodb-undo-directory=undo/files
+--innodb-undo-tablespaces=3
